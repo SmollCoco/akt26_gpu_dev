@@ -53,8 +53,9 @@ There are 1000 matrices of size n x n (n is at most 32), stored column by column
 | v2 shared | 32 | 181.34 | 361.4 | 1.34e-8 | 147.93 | 443.0 | 0.82x |
 | v3 4 cols/thread | 16 | 24.45 | 335.0 | 2.44e-8 | 70.74 | 115.8 | 2.89x |
 | v3 4 cols/thread | 32 | 94.06 | 696.7 | 1.34e-8 | 129.49 | 506.1 | 1.38x |
+| v3 4 cols/thread | 17 | 33.59 | 292.5 | 2.15e-8 | 162.68 | 60.4 | 4.84x |
 
-v1 and v2 are about twice as fast as cuBLAS at n=16 but lose at n=32. v3 is faster than cuBLAS at both sizes.
+v1 and v2 are about twice as fast as cuBLAS at n=16 but lose at n=32. v3 is faster than cuBLAS at both sizes. We also ran v3 at n=17 to test a size that is not a multiple of 4. It passes, and cuBLAS is slow at that size.
 
 Shared memory barely changed our time (187 µs to 181 µs at n=32, within run-to-run noise). The T4's L1 cache already kept v1's repeated loads close to the cores, so v2 removed work the cache was already doing. Most of the change in speedup at n=32 comes from cuBLAS running slower in that session (124 µs to 148 µs).
 
