@@ -37,11 +37,13 @@ Across three runs the speedup ranged from 1.06x to 1.12x. GER reads and writes t
 
 There are 1000 matrices of size n x n (n is at most 32), stored column by column, one after another.
 
-**Launch (both versions).** We launch one block per matrix, so the grid has 1000 blocks. Each block is n x n threads, which is 256 threads for n=16 and 1024 for n=32. Each thread computes one element of C. As in GER, `threadIdx.x` is the row, so loads of A and stores of C are coalesced. Every thread in a warp reads the same element of B, which the hardware sends to all of them in one read.
+**Launch (v1 and v2).** We launch one block per matrix, so the grid has 1000 blocks. Each block is n x n threads, which is 256 threads for n=16 and 1024 for n=32. Each thread computes one element of C. As in GER, `threadIdx.x` is the row, so loads of A and stores of C are coalesced. Every thread in a warp reads the same element of B, which the hardware sends to all of them in one read.
 
 **v1, simple.** Each thread runs the k loop directly on global memory.
 
 **v2, shared memory.** Each thread first copies one element of A and one of B into shared memory. After `__syncthreads()`, the k loop reads only from shared memory. Each matrix now leaves global memory once per block instead of once per thread that needs it.
+
+**v3, 4 columns per thread (the version in `gemm.cu` now).** The block shrinks to n x ceil(n/4) threads (64 for n=16, 256 for n=32), and the grid stays at 1000 blocks. Each thread computes 4 elements in one row of C: columns `threadIdx.y`, `threadIdx.y + blockDim.y`, and so on. It reads its element of A from shared memory once per step of the k loop and uses it for all 4 columns. The threads copy A and B into shared memory with a loop, because there are now fewer threads than elements. A `col < n` check covers sizes that are not a multiple of 4.
 
 | Version | n | Time (µs) | GFLOP/s | Max error | cuBLAS time (µs) | cuBLAS GFLOP/s | Speedup |
 |---|---|---|---|---|---|---|---|
@@ -49,9 +51,11 @@ There are 1000 matrices of size n x n (n is at most 32), stored column by column
 | v1 simple | 32 | 187.04 | 350.4 | 1.34e-8 | 123.97 | 528.7 | 0.66x |
 | v2 shared | 16 | 33.52 | 244.4 | 2.44e-8 | 70.81 | 115.7 | 2.11x |
 | v2 shared | 32 | 181.34 | 361.4 | 1.34e-8 | 147.93 | 443.0 | 0.82x |
+| v3 4 cols/thread | 16 | 24.45 | 335.0 | 2.44e-8 | 70.74 | 115.8 | 2.89x |
+| v3 4 cols/thread | 32 | 94.06 | 696.7 | 1.34e-8 | 129.49 | 506.1 | 1.38x |
 
-At n=16 both versions are about twice as fast as cuBLAS. At n=32 cuBLAS wins.
+v1 and v2 are about twice as fast as cuBLAS at n=16 but lose at n=32. v3 is faster than cuBLAS at both sizes.
 
 Shared memory barely changed our time (187 µs to 181 µs at n=32, within run-to-run noise). The T4's L1 cache already kept v1's repeated loads close to the cores, so v2 removed work the cache was already doing. Most of the change in speedup at n=32 comes from cuBLAS running slower in that session (124 µs to 148 µs).
 
-At n=32 a block has 1024 threads, the most a T4 SM can hold, so each SM runs one block at a time. While that block waits on memory, no other block can use the SM. The next step would be to let each thread compute 2 or 4 elements of C, so blocks get smaller and more of them fit on each SM. We did not do that here.
+At n=32 a block has 1024 threads, the most a T4 SM can hold, so each SM runs one block at a time. While that block waits on memory, no other block can use the SM. v3 fixes this. With 256 threads per block, 4 blocks fit on each SM, so one block can compute while another waits for its data. Each thread also does 4 multiply-adds per value of A it reads instead of 1. Together these cut the n=32 time from 181 µs to 94 µs.
