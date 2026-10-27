@@ -15,30 +15,47 @@
 //
 // Matrices are N x N, column-major.
 ////////////////////////////////////////////////////////////////////////////////
+constexpr int COLS_PER_THREAD = 4;
+
 __global__ void batch_gemm_kernel(int n, int batch_size,
                                     const float* A,
                                     const float* B,
                                     float* C)
 {
-    // one block per matrix, one thread per element of C.
+    // one block per matrix, each thread computes COLS_PER_THREAD elements
+    // of one row of C (columns threadIdx.y, threadIdx.y + blockDim.y, ...).
     // A and B are staged in shared memory (n <= 32, so 8 KB at most).
     __shared__ float sA[32 * 32];
     __shared__ float sB[32 * 32];
 
     const size_t base = (size_t)blockIdx.x * n * n;
     const int row = threadIdx.x;
-    const int col = threadIdx.y;
-    const int idx = col * n + row;
+    const int tid = threadIdx.y * blockDim.x + threadIdx.x;
+    const int nthreads = blockDim.x * blockDim.y;
 
-    sA[idx] = A[base + idx];
-    sB[idx] = B[base + idx];
+    for (int i = tid; i < n * n; i += nthreads) {
+        sA[i] = A[base + i];
+        sB[i] = B[base + i];
+    }
     __syncthreads();
 
-    float sum = 0.0f;
-    for (int k = 0; k < n; ++k)
-        sum += sA[k * n + row] * sB[col * n + k];
+    float sum[COLS_PER_THREAD] = {};
+    for (int k = 0; k < n; ++k) {
+        const float a = sA[k * n + row];
+        #pragma unroll
+        for (int c = 0; c < COLS_PER_THREAD; ++c) {
+            const int col = threadIdx.y + c * blockDim.y;
+            if (col < n)
+                sum[c] += a * sB[col * n + k];
+        }
+    }
 
-    C[base + idx] = sum;
+    #pragma unroll
+    for (int c = 0; c < COLS_PER_THREAD; ++c) {
+        const int col = threadIdx.y + c * blockDim.y;
+        if (col < n)
+            C[base + col * n + row] = sum[c];
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -205,7 +222,7 @@ int main(int argc, char** argv)
     // --------------------------------------------------------
     // Custom kernel configuration
     // --------------------------------------------------------
-    dim3 block(n, n, 1);
+    dim3 block(n, (n + COLS_PER_THREAD - 1) / COLS_PER_THREAD, 1);
     dim3 grid(batch_size, 1, 1);
 
     // --------------------------------------------------------
