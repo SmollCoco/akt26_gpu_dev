@@ -24,7 +24,7 @@ __global__ void batch_gemm_kernel(int n, int batch_size,
 {
     // one block per matrix, each thread computes COLS_PER_THREAD elements
     // of one row of C (columns threadIdx.y, threadIdx.y + blockDim.y, ...).
-    // A and B are staged in shared memory (n <= 32, so 8 KB at most).
+    // A and B are copied to shared memory first (n <= 32, so 8 KB at most).
     __shared__ float sA[32 * 32];
     __shared__ float sB[32 * 32];
 
